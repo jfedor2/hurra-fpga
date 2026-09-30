@@ -283,6 +283,9 @@ class BoundedMouseHost(Elaboratable):
         #: Runtime override forcing the TARGET link to stay Full Speed.
         self.force_full_speed = self.enumerator.force_full_speed
         self.enumerating = self.enumerator.enumerating
+        #: Dropping this powers TARGET-A off; raising it again powers it on and
+        #: enumerates from scratch (with the current ``force_full_speed``).
+        self.enable = Signal(init=1)
         self.enumerated = Signal()
         self.error_code = Signal(4)
         self.polling_active = Signal()
@@ -416,7 +419,7 @@ class BoundedMouseHost(Elaboratable):
         )
 
         m.d.comb += [
-            enumerator.enable.eq(1),
+            enumerator.enable.eq(self.enable),
             enumerator.line_state.eq(self.utmi.line_state),
             # High Speed disconnect cannot be read off line_state, because SE0
             # is the idle bus there. The PHY measures it during a SOF EOP.
