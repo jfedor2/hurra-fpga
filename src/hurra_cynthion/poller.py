@@ -40,6 +40,11 @@ class InterruptInPoller(Elaboratable):
         #: Negotiated link speed, from the enumerator. Selects how ``interval``
         #: is read.
         self.high_speed = Signal()
+        #: Hold a due poll back until this many cycles after the SOF tick, so
+        #: the IN token goes out later in the (micro)frame. 0 polls as early as
+        #: the bus allows. Must leave room for the transaction to finish before
+        #: the next SOF is due, or that SOF is delayed.
+        self.poll_offset = Signal(16)
 
         self.report_valid = Signal()
         self.report_ready = Signal()
@@ -81,12 +86,20 @@ class InterruptInPoller(Elaboratable):
         stream_index = Signal(6)
 
         pacer.decode(m)
+        # Cycles since the last SOF tick, saturating.
+        since_sof_tick = Signal(16)
+        with m.If(self.sof_tick):
+            m.d.usb += since_sof_tick.eq(0)
+        with m.Elif(since_sof_tick != 0xFFFF):
+            m.d.usb += since_sof_tick.eq(since_sof_tick + 1)
+
         transaction_start_ready = getattr(transaction, "start_ready", ~transaction.busy)
         issue_poll = (
             self.enable
             & self.connected
             & ~self.failed
             & poll_due
+            & (since_sof_tick >= self.poll_offset)
             & ~poll_active
             & ~copy_active
             & ~buffer_full

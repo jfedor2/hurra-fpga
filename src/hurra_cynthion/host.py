@@ -286,6 +286,8 @@ class BoundedMouseHost(Elaboratable):
         #: Dropping this powers TARGET-A off; raising it again powers it on and
         #: enumerates from scratch (with the current ``force_full_speed``).
         self.enable = Signal(init=1)
+        #: See InterruptInPoller.poll_offset; applies to every poller.
+        self.poll_offset = Signal(16)
         self.enumerated = Signal()
         self.error_code = Signal(4)
         self.polling_active = Signal()
@@ -526,6 +528,7 @@ class BoundedMouseHost(Elaboratable):
                 poller.max_packet_size.eq(enumerator.ep_max_packet[k]),
                 poller.interval.eq(enumerator.ep_interval[k]),
                 poller.high_speed.eq(enumerator.high_speed),
+                poller.poll_offset.eq(self.poll_offset),
             ]
 
         # The writer feeds none of polling_failed, device_unresponsive,
