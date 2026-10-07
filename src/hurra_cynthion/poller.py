@@ -45,6 +45,10 @@ class InterruptInPoller(Elaboratable):
         #: the bus allows. Must leave room for the transaction to finish before
         #: the next SOF is due, or that SOF is delayed.
         self.poll_offset = Signal(16)
+        #: Latency tester: don't poll while this is set. Unlike dropping
+        #: ``enable``, nothing is reset, so polling carries on where it left
+        #: off (same data toggle) once it clears.
+        self.hold = Signal()
 
         self.report_valid = Signal()
         self.report_ready = Signal()
@@ -100,6 +104,7 @@ class InterruptInPoller(Elaboratable):
             & ~self.failed
             & poll_due
             & (since_sof_tick >= self.poll_offset)
+            & ~self.hold
             & ~poll_active
             & ~copy_active
             & ~buffer_full

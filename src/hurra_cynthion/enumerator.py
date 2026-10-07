@@ -241,6 +241,10 @@ class BoundedMouseEnumerator(Elaboratable):
         interface_count = Signal(range(MAX_INTERFACES + 2))
         declared_interfaces = Signal(8)
         cur_is_hid = Signal()
+        # Latency tester: a vendor-specific interface (an XInput controller's,
+        # say). Its interrupt-IN endpoints are polled like a HID one's, but it
+        # has no report descriptor.
+        cur_is_vendor = Signal()
         cur_alt_nonzero = Signal()
         cur_interface = Signal(8)
         cur_report_length = Signal(16)
@@ -891,6 +895,7 @@ class BoundedMouseEnumerator(Elaboratable):
                     self.out_present.eq(0),
                     self.out_ignored.eq(0),
                     cur_is_hid.eq(0),
+                    cur_is_vendor.eq(0),
                     cur_report_length.eq(0),
                     declared_interfaces.eq(0),
                 ]
@@ -926,6 +931,7 @@ class BoundedMouseEnumerator(Elaboratable):
                             m.d.usb += [
                                 interface_count.eq(interface_count + 1),
                                 cur_is_hid.eq(0),
+                                cur_is_vendor.eq(0),
                                 cur_alt_nonzero.eq(0),
                                 cur_report_length.eq(0),
                             ]
@@ -994,7 +1000,10 @@ class BoundedMouseEnumerator(Elaboratable):
                                     with m.Elif(interface_count > MAX_INTERFACES):
                                         m.d.usb += unsupported.eq(1)
                                 with m.Case(5):
-                                    m.d.usb += cur_is_hid.eq(control.data == 3)
+                                    m.d.usb += [
+                                        cur_is_hid.eq(control.data == 3),
+                                        cur_is_vendor.eq(control.data == 0xFF),
+                                    ]
                         with m.Elif(current_descriptor_type == 0x21):
                             with m.If(cur_is_hid):
                                 with m.If(descriptor_position == 5):
@@ -1060,7 +1069,10 @@ class BoundedMouseEnumerator(Elaboratable):
                                 # capture a HID interrupt-IN endpoint of the current interface;
                                 # non-interrupt endpoints are skipped.
                                 with m.If(
-                                    cur_is_hid & ~cur_alt_nonzero & ep_addr[7] & (ep_attrs[:2] == 3)
+                                    (cur_is_hid | cur_is_vendor)
+                                    & ~cur_alt_nonzero
+                                    & ep_addr[7]
+                                    & (ep_attrs[:2] == 3)
                                 ):
                                     # Any number 1..15: the clone binds each relay
                                     # slot's number at runtime. Two slots on one
@@ -1082,7 +1094,7 @@ class BoundedMouseEnumerator(Elaboratable):
                                         m.d.usb += unsupported.eq(1)
                                     with m.Elif(ep_interval_now == 0):
                                         m.d.usb += malformed.eq(1)
-                                    with m.Elif(cur_report_length == 0):
+                                    with m.Elif(cur_is_hid & (cur_report_length == 0)):
                                         m.d.usb += malformed.eq(1)
                                     with m.Elif(self.ep_count >= MAX_ENDPOINTS):
                                         m.d.usb += oversized.eq(1)
@@ -1299,6 +1311,9 @@ class BoundedMouseEnumerator(Elaboratable):
                         self.error_code.eq(HostError.NONE.value),
                     ]
                     m.next = "READY"
+                with m.Elif(self.ep_report_length[report_cursor] == 0):
+                    # A vendor-specific interface: no report descriptor.
+                    m.d.usb += report_cursor.eq(report_cursor + 1)
                 with m.Elif(
                     report_fetched & (self.ep_interface[report_cursor] == report_fetched_interface)
                 ):

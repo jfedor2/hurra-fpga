@@ -396,10 +396,11 @@ def test_enumerator_fetches_one_report_descriptor_per_interface() -> None:
     simulate(bench)
 
 
-def test_enumerates_composite_with_vendor_interface_skipped() -> None:
+def test_enumerates_composite_with_vendor_interface_polled() -> None:
     async def bench(ctx, dut, control, timing) -> None:
-        # mouse (interface 0) plus a non-HID vendor interface (class 0xFF, interface 1);
-        # the vendor interface and its interrupt-IN endpoint must be skipped, not captured.
+        # mouse (interface 0) plus a vendor interface (class 0xFF, interface 1), as an
+        # XInput controller has. Latency tester: its interrupt-IN endpoint is captured
+        # too, with no report descriptor fetched for it.
         interfaces = [(3, 1, 2, 0x81, 52), (0xFF, 0, 0, 0x82, 65)]
         config = composite_configuration(interfaces)
         requests = [
@@ -416,9 +417,10 @@ def test_enumerates_composite_with_vendor_interface_skipped() -> None:
         await settle(ctx)
         assert ctx.get(dut.ready)
         assert ctx.get(dut.error_code) == HostError.NONE
-        assert ctx.get(dut.ep_count) == 1
-        assert ctx.get(dut.ep_interface[0]) == 0
-        assert ctx.get(dut.ep_number[0]) == 1
+        assert ctx.get(dut.ep_count) == 2
+        assert [ctx.get(dut.ep_interface[k]) for k in range(2)] == [0, 1]
+        assert [ctx.get(dut.ep_number[k]) for k in range(2)] == [1, 2]
+        assert [ctx.get(dut.ep_report_length[k]) for k in range(2)] == [52, 0]
 
     simulate(bench)
 

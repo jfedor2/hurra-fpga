@@ -288,6 +288,11 @@ class BoundedMouseHost(Elaboratable):
         self.enable = Signal(init=1)
         #: See InterruptInPoller.poll_offset; applies to every poller.
         self.poll_offset = Signal(16)
+        #: Latency tester: poll only the interrupt-IN endpoint with this
+        #: number, so that its IN token always goes out at the same point of
+        #: the (micro)frame instead of taking turns with the others. 0 polls
+        #: them all.
+        self.poll_only_endpoint = Signal(4)
         self.enumerated = Signal()
         self.error_code = Signal(4)
         self.polling_active = Signal()
@@ -529,6 +534,10 @@ class BoundedMouseHost(Elaboratable):
                 poller.interval.eq(enumerator.ep_interval[k]),
                 poller.high_speed.eq(enumerator.high_speed),
                 poller.poll_offset.eq(self.poll_offset),
+                poller.hold.eq(
+                    (self.poll_only_endpoint != 0)
+                    & (enumerator.ep_number[k] != self.poll_only_endpoint)
+                ),
             ]
 
         # The writer feeds none of polling_failed, device_unresponsive,
