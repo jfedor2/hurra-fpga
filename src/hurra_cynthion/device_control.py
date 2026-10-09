@@ -385,6 +385,11 @@ class HIDClassRequestHandler(USBRequestHandler):
     cloned device's bMaxPacketSize0, an int or a ``Signal`` -- because that
     is the size the PC splits the data stage at. The handler owns its data
     PID for that: DATA1 first, toggled per ACKed packet.
+
+    ``skiplist`` is as LUNA's ``StandardRequestHandler`` has it: functions
+    that take the setup packet and return whether this handler should leave
+    the request alone, for another handler on the endpoint to answer
+    locally. A skipped request is to this handler as a non-class one.
     """
 
     def __init__(
@@ -393,11 +398,13 @@ class HIDClassRequestHandler(USBRequestHandler):
         relay=None,
         timeout_cycles: int = 1_200_000,
         max_packet_size: int | Value = 64,
+        skiplist=(),
     ):
         super().__init__()
         self._relay = relay
         self._timeout_cycles = timeout_cycles
         self._max_packet_size = max_packet_size
+        self._skiplist = tuple(skiplist)
 
     def elaborate(self, platform):
         del platform
@@ -413,7 +420,11 @@ class HIDClassRequestHandler(USBRequestHandler):
         # whose .n asserts when none *or multiple* handlers claim. Dropping
         # claim mid-transfer therefore routes the endpoint to the STALL
         # fallback silently rather than failing loudly.
-        with m.If(setup.type == USBRequestType.CLASS):
+        is_class = Signal()
+        m.d.comb += is_class.eq(
+            (setup.type == USBRequestType.CLASS) & ~Cat(*[skip(setup) for skip in self._skiplist]).any()
+        )
+        with m.If(is_class):
             m.d.comb += interface.claim.eq(1)
 
             if relay is None:
@@ -505,7 +516,6 @@ class HIDClassRequestHandler(USBRequestHandler):
         # the request the host actually sent, direction bit included.
         request_type = Cat(setup.recipient, setup.type, setup.is_in_request)
 
-        is_class = setup.type == USBRequestType.CLASS
         setup_pending = Signal()
         # CAPTURE_OUT may be entered while an OUT packet is already mid-flight
         # (via DISPATCH). Accept only packets that STARTED while capturing.
