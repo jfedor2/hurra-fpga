@@ -25,6 +25,14 @@ class HostTiming:
     hs_interpacket_delay_cycles: int
     max_transport_errors: int
     control_nak_timeout_cycles: int
+    #: Idle time between a control transfer's last transaction and the next
+    #: transfer's SETUP. Some devices' firmware needs a moment after a
+    #: transfer before it can take another: with none, a MagicBoots for PS4
+    #: answered SET_ADDRESS's status stage with the device descriptor's first
+    #: packet again. A PC leaves it 35 us at the least and about 140 us
+    #: typically (xHCI, on a root port and through a hub), while running the
+    #: stages within a transfer back to back. 0 for none.
+    control_setup_gap_cycles: int = 0
 
     @classmethod
     def hardware(cls, clock_hz: int = 60_000_000) -> "HostTiming":
@@ -106,6 +114,8 @@ class HostTiming:
             hs_interpacket_delay_cycles=12,
             max_transport_errors=3,
             control_nak_timeout_cycles=max(1, clock_hz // 2),
+            # 200 us.
+            control_setup_gap_cycles=clock_hz // 5_000,
         )
 
     @classmethod

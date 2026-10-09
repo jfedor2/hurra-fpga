@@ -63,6 +63,14 @@ class USBControlTransferEngine(Elaboratable):
         if self.add_transaction_submodule:
             m.submodules.transaction = transaction
         transaction_start_ready = getattr(transaction, "start_ready", ~transaction.busy)
+        # See HostTiming.control_setup_gap_cycles. The counter is loaded as
+        # each of a transfer's transactions ends and runs down from there, so
+        # it only holds back a SETUP that comes soon after the last transfer.
+        gap_cycles = self.timing.control_setup_gap_cycles
+        gap_counter = Signal(range(gap_cycles + 1))
+        gap_done = gap_counter == 0
+        with m.If(~gap_done):
+            m.d.usb += gap_counter.eq(gap_counter - 1)
 
         active = Signal()
         address = Signal(7)
@@ -153,7 +161,7 @@ class USBControlTransferEngine(Elaboratable):
         def abort_if_disconnected() -> None:
             finish(TransactionStatus.DISCONNECTED)
 
-        with m.FSM(domain="usb"):
+        with m.FSM(domain="usb") as fsm:
             with m.State("IDLE"), m.If(self.start):
                 with m.If(~self.connected):
                     m.d.usb += [
@@ -198,7 +206,7 @@ class USBControlTransferEngine(Elaboratable):
                         transaction.tx_length.eq(8),
                         transaction.tx_payload.eq(setup_payload[transaction.tx_index]),
                     ]
-                    with m.If(transaction_start_ready):
+                    with m.If(transaction_start_ready & gap_done):
                         m.next = "WAIT_SETUP"
 
             with m.State("WAIT_SETUP"):
@@ -394,5 +402,19 @@ class USBControlTransferEngine(Elaboratable):
                         with m.If(set_address_pending):
                             m.d.usb += self.set_address_valid.eq(1)
                         m.next = "IDLE"
+
+        if gap_cycles:
+            waiting = (
+                fsm.ongoing("WAIT_SETUP")
+                | fsm.ongoing("WAIT_READ")
+                | fsm.ongoing("WAIT_WRITE")
+                | fsm.ongoing("WAIT_STATUS")
+            )
+            with m.If(waiting & transaction.done):
+                m.d.usb += gap_counter.eq(gap_cycles)
+            # ISSUE_SETUP raises start whether or not it can be taken; the
+            # arbiter would grant it.
+            with m.If(fsm.ongoing("ISSUE_SETUP") & ~gap_done):
+                m.d.comb += transaction.start.eq(0)
 
         return m

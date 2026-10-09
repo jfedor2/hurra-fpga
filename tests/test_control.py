@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from amaranth import Array, Elaboratable, Module, Signal
 from amaranth.back import rtlil
@@ -554,3 +556,57 @@ def test_control_engine_elaborates_with_real_transaction_engine() -> None:
         ],
     )
     assert len(netlist) < 500_000
+
+
+def test_control_setup_gap_separates_transfers_but_not_stages() -> None:
+    gap = 10
+    timing = replace(HostTiming.simulation(), control_setup_gap_cycles=gap)
+
+    async def bench(ctx, dut, transaction) -> None:
+        async def idle_until_start() -> int:
+            cycles = 0
+            while not ctx.get(transaction.start):
+                await ctx.tick("usb")
+                cycles += 1
+            return cycles
+
+        async def read_transfer() -> list[int]:
+            # SETUP, a NAKed IN, the IN again, the status OUT.
+            await start_control(ctx, dut, request_type=0x80, request=6, length=2)
+            results = [
+                {},
+                {"status": TransactionStatus.NAK},
+                {"rx_payload": [0xAA, 0xBB], "rx_toggle": 1},
+                {},
+            ]
+            waits = []
+            for result in results:
+                waits.append(await idle_until_start())
+                await complete_transaction(ctx, dut, transaction, **result)
+            while not ctx.get(dut.done):
+                await ctx.tick("usb")
+            assert ctx.get(dut.status) == TransactionStatus.SUCCESS
+            assert ctx.get(dut.transferred) == 2
+            return waits
+
+        # Nothing came before the first transfer: no waiting at all.
+        first = await read_transfer()
+        assert max(first) < gap
+
+        # The second follows at once: its SETUP waits, its stages don't.
+        await ctx.tick("usb")
+        second = await read_transfer()
+        assert second[0] >= gap - 4
+        assert max(second[1:]) < gap
+
+        # Long after that, a SETUP goes straight out again.
+        await ctx.tick("usb").repeat(2 * gap)
+        third = await read_transfer()
+        assert max(third) < gap
+
+    simulate(bench, timing=timing)
+
+
+def test_hardware_timing_leaves_a_gap_before_setup() -> None:
+    assert HostTiming.hardware().control_setup_gap_cycles == 12_000
+    assert HostTiming.simulation().control_setup_gap_cycles == 0
